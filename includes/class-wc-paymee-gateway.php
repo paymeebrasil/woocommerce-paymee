@@ -13,8 +13,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 /**
  * WooCommerce PayMee gateway.
  */
+
 class WC_PayMee_Gateway extends WC_Payment_Gateway {
 
+	
 	/**
 	 * Constructor for the gateway.
 	 */
@@ -41,7 +43,7 @@ class WC_PayMee_Gateway extends WC_Payment_Gateway {
 		$this->tc_cash       = $this->get_option( 'tc_cash', 'yes' );
 		$this->send_only_total   = $this->get_option( 'send_only_total', 'no' );
 		$this->invoice_prefix    = $this->get_option( 'invoice_prefix', 'WC-' );
-		$this->sandbox           = $this->get_option( 'sandbox', 'yes' );
+		$this->sandbox           = $this->get_option( 'sandbox', 'no' );
 		$this->debug             = $this->get_option( 'debug' );
 
 		// Active logs.
@@ -52,16 +54,88 @@ class WC_PayMee_Gateway extends WC_Payment_Gateway {
 				$this->log = new WC_Logger();
 			}
 		}
-
 		// Set the API.
 		$this->api = new WC_PayMee_API( $this );
-
-		// Main actions.
-		add_action( 'woocommerce_api_wc_paymee_gateway', array( $this, 'ipn_handler' ) );
-		add_action( 'valid_paymee_ipn_request', array( $this, 'update_order_status' ) );
-		add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'process_admin_options' ) );
-		add_action( 'woocommerce_receipt_' . $this->id, array( $this, 'receipt_page' ) );
+		add_action('woocommerce_api_paymee_ipn_listener', array($this, 'paymee_ipn_listener'));
 	}
+
+	/**
+	 * check if transactions is paid at PayMee
+	 * @return bool
+	 */
+	private function check_webhook_status($obj) {
+		
+        $x_api_key = $this->get_api_key();
+        $x_api_token = $this->get_api_token();
+        $url = "https://" . $this->get_enviroment() . ".paymee.com.br/v1.1/transactions/" . $obj->saleToken;
+        
+        $curl = curl_init();
+        curl_setopt_array($curl, array(
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+            CURLOPT_HTTPHEADER => array(
+                "Content-Type: application/json",
+                "x-api-key: $x_api_key",
+                "x-api-token: $x_api_token"
+            ),
+        ));
+        $response = curl_exec($curl);
+        $err = curl_error($curl);
+        curl_close($curl);
+        if ($err) {
+            $this->log->debug("cURL Error #:" . $err);
+            return false;
+        } 
+		$responseData = json_decode($response, true);
+		if($responseData['message'] == 'success' && 
+					$responseData['situation'] == 'PAID' && 
+						$obj->referenceCode === $responseData['referenceCode']) {
+            return true;
+		} 
+		return false;
+	}
+	
+	/**
+	 * handle a PayMee's webhook
+	 * @return void
+	 */
+	public function confirm_payment($order_id, $payload) {
+		
+		global $woocommerce;
+		try {
+			$order = new WC_Order($order_id);
+			if(!isset($order) || !$order->id) {
+				status_header(404);
+			}
+			else if(($order->get_status() !== 'processing' && $order->get_status() !== 'completed') && 
+							$this->check_webhook_status($payload)) {
+				$order->update_status('processing');
+			}
+			status_header(200);
+		}
+		catch (Exception $e) {
+			$this->log->debug($e->getMessage());
+			status_header(500);
+		}
+	}
+
+
+	public function paymee_ipn_listener() {
+		try {
+
+			$raw_post = file_get_contents( 'php://input' );
+			$payload  = json_decode( $raw_post );
+				
+			if (isset($payload->referenceCode)) {
+				$order_id = intval(str_replace($this->invoice_prefix, "", $payload->referenceCode));
+				$this->confirm_payment($order_id, $payload);
+			}
+		}
+		catch (Exception $e) {
+		}
+	}
+
 
 	/**
 	 * Returns a bool that indicates if currency is amongst the supported ones.
@@ -88,6 +162,13 @@ class WC_PayMee_Gateway extends WC_Payment_Gateway {
 	 */
 	public function get_api_token() {
 		return $this->api_token;
+	}
+
+	/**
+	 * Get enviroment
+	 */
+	public function get_enviroment() {
+		return ('yes' === $this->sandbox) ? 'apisandbox' : 'api';
 	}
 
 	/**
@@ -207,11 +288,6 @@ class WC_PayMee_Gateway extends WC_Payment_Gateway {
 				'description' => __( 'Please enter a prefix for your invoice numbers. If you use your PayMee account for multiple stores ensure this prefix is unqiue as PayMee will not allow orders with the same invoice number.', 'woocommerce-paymee' ),
 				'desc_tip'    => true,
 				'default'     => 'WC-',
-			),
-			'testing' => array(
-				'title'       => __( 'Testes', 'woocommerce-paymee' ),
-				'type'        => 'title',
-				'description' => '',
 			),
 			'debug' => array(
 				'title'       => __( 'Debug Log', 'woocommerce-paymee' ),

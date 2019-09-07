@@ -26,7 +26,7 @@ if ( ! class_exists( 'WC_PayMee' ) ) :
 		 *
 		 * @var string
 		 */
-		const VERSION = '1.0.0';
+		const VERSION = '1.1.0';
 
 		/**
 		 * Instance of this class.
