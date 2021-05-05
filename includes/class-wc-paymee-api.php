@@ -348,7 +348,7 @@ class WC_PayMee_API {
 			"amount" => $order->get_total(),
 			"referenceCode" => $this->gateway->invoice_prefix . $order->get_id(),
 			"maxAge" => 1440,
-			"callbackUrl" =>  site_url() . "/?wc-api=paymee_ipn_listener",
+			"callbackURL" =>  site_url() . "/?wc-api=paymee_ipn_listener",
 			"shopper" => array(
 				"firstName" => $order->get_billing_first_name(),
 				"lastName" => $order->get_billing_last_name(),
